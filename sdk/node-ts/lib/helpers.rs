@@ -17,6 +17,28 @@ pub enum PullPolicy {
     Never,
 }
 
+/// Supported disk image formats for [`Mount.disk`] and the `disk()` rootfs.
+#[napi(string_enum)]
+#[derive(Clone, Copy)]
+pub enum DiskImageFormat {
+    #[napi(value = "qcow2")]
+    Qcow2,
+    #[napi(value = "raw")]
+    Raw,
+    #[napi(value = "vmdk")]
+    Vmdk,
+}
+
+impl From<DiskImageFormat> for microsandbox::sandbox::DiskImageFormat {
+    fn from(f: DiskImageFormat) -> Self {
+        match f {
+            DiskImageFormat::Qcow2 => microsandbox::sandbox::DiskImageFormat::Qcow2,
+            DiskImageFormat::Raw => microsandbox::sandbox::DiskImageFormat::Raw,
+            DiskImageFormat::Vmdk => microsandbox::sandbox::DiskImageFormat::Vmdk,
+        }
+    }
+}
+
 /// Log level for sandbox process output.
 #[napi(string_enum)]
 pub enum LogLevel {
@@ -132,6 +154,18 @@ pub struct MountOptions {
 pub struct TmpfsOptions {
     /// Size limit in MiB.
     pub size_mib: Option<u32>,
+    /// Read-only mount.
+    pub readonly: Option<bool>,
+}
+
+/// Options for disk-image volume mounts.
+#[napi(object)]
+pub struct DiskOptions {
+    /// Disk image format. When omitted, inferred from the file extension.
+    pub format: Option<DiskImageFormat>,
+    /// Inner filesystem type the guest should mount (e.g. `"ext4"`). When
+    /// omitted, agentd probes `/proc/filesystems`.
+    pub fstype: Option<String>,
     /// Read-only mount.
     pub readonly: Option<bool>,
 }
@@ -263,6 +297,9 @@ impl Mount {
             bind: Some(path),
             named: None,
             tmpfs: None,
+            disk: None,
+            format: None,
+            fstype: None,
             readonly,
             size_mib: None,
         }
@@ -276,6 +313,9 @@ impl Mount {
             bind: None,
             named: Some(name),
             tmpfs: None,
+            disk: None,
+            format: None,
+            fstype: None,
             readonly,
             size_mib: None,
         }
@@ -291,8 +331,34 @@ impl Mount {
             bind: None,
             named: None,
             tmpfs: Some(true),
+            disk: None,
+            format: None,
+            fstype: None,
             readonly,
             size_mib,
+        }
+    }
+
+    /// Mount a host disk image as a virtio-blk device at a guest path.
+    ///
+    /// Format defaults to the file extension (`.qcow2` → Qcow2, `.vmdk` →
+    /// Vmdk, anything else → Raw). Use `opts.format` to override. `fstype`
+    /// (e.g. `"ext4"`) is the inner filesystem agentd will mount; when
+    /// omitted, agentd probes `/proc/filesystems`.
+    #[napi]
+    pub fn disk(path: String, opts: Option<DiskOptions>) -> MountConfig {
+        let (format, fstype, readonly) = opts
+            .map(|o| (o.format, o.fstype, o.readonly))
+            .unwrap_or((None, None, None));
+        MountConfig {
+            bind: None,
+            named: None,
+            tmpfs: None,
+            disk: Some(path),
+            format,
+            fstype,
+            readonly,
+            size_mib: None,
         }
     }
 }

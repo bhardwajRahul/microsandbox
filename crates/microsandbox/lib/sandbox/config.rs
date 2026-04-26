@@ -249,6 +249,7 @@ impl SandboxConfig {
         self.mounts.push(VolumeMount::Tmpfs {
             guest: DEFAULT_OCI_TMPFS_PATH.to_string(),
             size_mib: Some(default_oci_tmpfs_size_mib(self.memory_mib)),
+            readonly: false,
         });
     }
 }
@@ -299,7 +300,8 @@ fn guest_mount_is(mount: &VolumeMount, path: &str) -> bool {
     match mount {
         VolumeMount::Bind { guest, .. }
         | VolumeMount::Named { guest, .. }
-        | VolumeMount::Tmpfs { guest, .. } => {
+        | VolumeMount::Tmpfs { guest, .. }
+        | VolumeMount::DiskImage { guest, .. } => {
             normalized_guest_path(guest) == normalized_guest_path(path)
         }
     }
@@ -541,9 +543,14 @@ mod tests {
 
         assert_eq!(config.mounts.len(), 1);
         match &config.mounts[0] {
-            VolumeMount::Tmpfs { guest, size_mib } => {
+            VolumeMount::Tmpfs {
+                guest,
+                size_mib,
+                readonly,
+            } => {
                 assert_eq!(guest, "/tmp");
                 assert_eq!(*size_mib, Some(512));
+                assert!(!*readonly);
             }
             mount => panic!("expected tmpfs mount, got {mount:?}"),
         }
@@ -574,6 +581,27 @@ mod tests {
     fn test_apply_runtime_defaults_skips_non_oci_roots() {
         let mut config = SandboxConfig {
             image: RootfsSource::Bind("/tmp/rootfs".into()),
+            ..Default::default()
+        };
+
+        config.apply_runtime_defaults();
+
+        assert!(config.mounts.is_empty());
+    }
+
+    #[test]
+    fn test_apply_runtime_defaults_skips_disk_image_roots() {
+        // Disk-image rootfses bring their own /tmp (it's part of the
+        // shipped filesystem), so we don't synthesise an implicit tmpfs
+        // for them. This test pins the policy so a future change has to
+        // be deliberate.
+        use crate::sandbox::DiskImageFormat;
+        let mut config = SandboxConfig {
+            image: RootfsSource::DiskImage {
+                path: "/tmp/disk.qcow2".into(),
+                format: DiskImageFormat::Qcow2,
+                fstype: None,
+            },
             ..Default::default()
         };
 
