@@ -83,6 +83,8 @@ from microsandbox.types import (
     Image,
     ImageSource,
     LogLevel,
+    LogReadSource,
+    LogSource,
     MiB,
     MountConfig,
     MountKind,
@@ -174,6 +176,8 @@ __all__ = [
     "PullPolicy",
     "RegistryAuth",
     "LogLevel",
+    "LogSource",
+    "LogReadSource",
     # Patches
     "Patch",
     "PatchConfig",
