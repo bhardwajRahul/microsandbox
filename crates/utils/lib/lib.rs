@@ -79,23 +79,6 @@ pub const LIBKRUNFW_ABI: &str = "5";
 /// Database filename.
 pub const DB_FILENAME: &str = "msb.db";
 
-/// SQLite PRAGMAs applied to every connection for concurrent-access safety.
-///
-/// - WAL mode lets readers run concurrently with a single writer.
-/// - 5-second busy timeout retries on transient lock contention.
-/// - `synchronous = NORMAL` is the recommended pairing with WAL: fsyncs are
-///   batched at checkpoint time instead of every commit, which dramatically
-///   shortens how long the global writer lock is held under concurrent
-///   sandbox creates. Crash-safe (no corruption on process/OS crash); the
-///   only risk is losing the most recently committed transactions on a
-///   power loss, which is acceptable for sandbox lifecycle and image
-///   catalog state.
-/// - Foreign key enforcement is off by default in SQLite.
-pub const SQLITE_PRAGMAS: &str = "PRAGMA journal_mode = WAL; \
-    PRAGMA synchronous = NORMAL; \
-    PRAGMA busy_timeout = 5000; \
-    PRAGMA foreign_keys = ON;";
-
 /// Global configuration filename.
 pub const CONFIG_FILENAME: &str = "config.json";
 

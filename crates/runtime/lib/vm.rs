@@ -12,10 +12,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use microsandbox_db::DbWriteConnection;
 use microsandbox_db::entity::run as run_entity;
 use microsandbox_filesystem::{DynFileSystem, PassthroughConfig, PassthroughFs};
 use msb_krun::VmBuilder;
-use sea_orm::{ColumnTrait, ConnectOptions, Database, DatabaseConnection, EntityTrait, Set};
+use sea_orm::{ColumnTrait, EntityTrait, Set};
 use serde::Serialize;
 
 use crate::console::{AgentConsoleBackend, ConsoleSharedState};
@@ -836,33 +837,25 @@ fn write_startup_info(json: &str) -> RuntimeResult<()> {
 }
 
 /// Connect to the sandbox database.
+///
+/// Busy timeout uses [`microsandbox_db::pool::DEFAULT_BUSY_TIMEOUT_SECS`]:
+/// the in-VM runtime is not user-configurable, so DB tuning policy lives
+/// with the host (which honours `~/.microsandbox/config.json`).
 async fn connect_db(
     db_path: &std::path::Path,
     connect_timeout_secs: u64,
-) -> RuntimeResult<DatabaseConnection> {
-    let url = format!("sqlite://{}?mode=rwc", db_path.display());
-    let opts = ConnectOptions::new(url)
-        .max_connections(1)
-        .connect_timeout(Duration::from_secs(connect_timeout_secs))
-        .sqlx_logging(false)
-        .to_owned();
-    let db = Database::connect(opts)
-        .await
-        .map_err(|e| RuntimeError::Custom(format!("database connect: {e}")))?;
-
-    use sea_orm::ConnectionTrait;
-    db.execute(sea_orm::Statement::from_string(
-        sea_orm::DatabaseBackend::Sqlite,
-        microsandbox_utils::SQLITE_PRAGMAS,
-    ))
+) -> RuntimeResult<DbWriteConnection> {
+    DbWriteConnection::open(
+        db_path,
+        Duration::from_secs(connect_timeout_secs),
+        Duration::from_secs(microsandbox_db::pool::DEFAULT_BUSY_TIMEOUT_SECS),
+    )
     .await
-    .map_err(|e| RuntimeError::Custom(format!("database pragmas: {e}")))?;
-
-    Ok(db)
+    .map_err(|e| RuntimeError::Custom(format!("database connect: {e}")))
 }
 
 /// Insert a run record into the database.
-async fn insert_run(db: &DatabaseConnection, sandbox_id: i32, pid: u32) -> RuntimeResult<i32> {
+async fn insert_run(db: &DbWriteConnection, sandbox_id: i32, pid: u32) -> RuntimeResult<i32> {
     let now = chrono::Utc::now().naive_utc();
     let record = run_entity::ActiveModel {
         sandbox_id: Set(sandbox_id),
@@ -879,7 +872,7 @@ async fn insert_run(db: &DatabaseConnection, sandbox_id: i32, pid: u32) -> Runti
 }
 
 /// Mark a run record as failed (Terminated + InternalError) on startup error.
-async fn mark_run_failed(db: &DatabaseConnection, run_id: i32) -> RuntimeResult<()> {
+async fn mark_run_failed(db: &DbWriteConnection, run_id: i32) -> RuntimeResult<()> {
     use sea_orm::QueryFilter;
     use sea_orm::sea_query::Expr;
 

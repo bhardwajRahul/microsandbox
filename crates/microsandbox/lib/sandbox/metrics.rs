@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use futures::stream;
+use microsandbox_db::DbReadConnection;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 
 use crate::{
@@ -54,8 +55,7 @@ impl Sandbox {
         if self.config.effective_metrics_interval().is_none() {
             return Err(MicrosandboxError::MetricsDisabled(self.config.name.clone()));
         }
-        let db =
-            crate::db::init_global(Some(crate::config::config().database.max_connections)).await?;
+        let db = crate::db::init_global().await?.read();
         metrics_for_sandbox(db, self.db_id, memory_limit_bytes(&self.config)).await
     }
 
@@ -84,11 +84,9 @@ impl Sandbox {
             tokio::time::interval(interval),
             move |mut ticker| async move {
                 ticker.tick().await;
-                let db =
-                    crate::db::init_global(Some(crate::config::config().database.max_connections))
-                        .await;
-                let item = match db {
-                    Ok(db) => metrics_for_sandbox(db, db_id, memory_limit_bytes).await,
+                let pools = crate::db::init_global().await;
+                let item = match pools {
+                    Ok(pools) => metrics_for_sandbox(pools.read(), db_id, memory_limit_bytes).await,
                     Err(err) => Err(err),
                 };
                 Some((item, ticker))
@@ -104,7 +102,8 @@ impl Sandbox {
 
 /// Get the latest metrics snapshot for every running sandbox.
 pub async fn all_sandbox_metrics() -> MicrosandboxResult<HashMap<String, SandboxMetrics>> {
-    let db = crate::db::init_global(Some(crate::config::config().database.max_connections)).await?;
+    let pools = crate::db::init_global().await?;
+    let db = pools.read();
     let sandboxes = sandbox_entity::Entity::find()
         .filter(
             sandbox_entity::Column::Status.is_in([SandboxStatus::Running, SandboxStatus::Draining]),
@@ -115,7 +114,7 @@ pub async fn all_sandbox_metrics() -> MicrosandboxResult<HashMap<String, Sandbox
 
     let mut metrics = HashMap::with_capacity(sandboxes.len());
     for sandbox in sandboxes {
-        let sandbox = super::reconcile_sandbox_runtime_state(db, sandbox).await?;
+        let sandbox = super::reconcile_sandbox_runtime_state(pools, sandbox).await?;
         if !matches!(
             sandbox.status,
             SandboxStatus::Running | SandboxStatus::Draining
@@ -135,7 +134,7 @@ pub async fn all_sandbox_metrics() -> MicrosandboxResult<HashMap<String, Sandbox
 }
 
 pub(super) async fn metrics_for_sandbox(
-    db: &sea_orm::DatabaseConnection,
+    db: &DbReadConnection,
     sandbox_id: i32,
     memory_limit_bytes: u64,
 ) -> MicrosandboxResult<SandboxMetrics> {
@@ -195,7 +194,7 @@ pub(super) async fn metrics_for_sandbox(
 }
 
 async fn latest_metric(
-    db: &sea_orm::DatabaseConnection,
+    db: &DbReadConnection,
     sandbox_id: i32,
 ) -> MicrosandboxResult<Option<sandbox_metric_entity::Model>> {
     sandbox_metric_entity::Entity::find()

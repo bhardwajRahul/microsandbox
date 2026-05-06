@@ -3,8 +3,9 @@
 use std::num::NonZero;
 use std::time::{Duration, Instant};
 
+use microsandbox_db::DbWriteConnection;
 use microsandbox_db::entity::sandbox_metric as sandbox_metric_entity;
-use sea_orm::{ActiveModelTrait, DatabaseConnection, Set};
+use sea_orm::{ActiveModelTrait, Set};
 
 use crate::{RuntimeError, RuntimeResult};
 
@@ -64,7 +65,7 @@ struct ProcessSample {
 
 /// Run the background metrics sampler until the sandbox process exits.
 pub async fn run_metrics_sampler(
-    db: DatabaseConnection,
+    db: DbWriteConnection,
     sandbox_id: i32,
     pid: u32,
     interval_ms: NonZero<u64>,
@@ -128,7 +129,7 @@ pub async fn run_metrics_sampler(
 }
 
 async fn persist_sample(
-    db: &DatabaseConnection,
+    db: &DbWriteConnection,
     sandbox_id: i32,
     cpu_percent: f32,
     process: ProcessSample,
