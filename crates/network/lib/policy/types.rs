@@ -274,9 +274,10 @@ impl NetworkPolicy {
         Self {
             default_egress: Action::Deny,
             default_ingress: Action::Allow,
-            rules: vec![Rule::allow_egress(Destination::Group(
-                DestinationGroup::Public,
-            ))],
+            rules: vec![
+                Rule::allow_dns(),
+                Rule::allow_egress(Destination::Group(DestinationGroup::Public)),
+            ],
         }
     }
 
@@ -288,6 +289,7 @@ impl NetworkPolicy {
             default_egress: Action::Deny,
             default_ingress: Action::Allow,
             rules: vec![
+                Rule::allow_dns(),
                 Rule::allow_egress(Destination::Group(DestinationGroup::Public)),
                 Rule::allow_egress(Destination::Group(DestinationGroup::Private)),
             ],
@@ -415,27 +417,56 @@ impl NetworkPolicy {
         })
     }
 
-    /// Should the DNS forwarder refuse a query for `name`?
+    /// Evaluate a DNS query name against egress policy.
     ///
-    /// Returns `true` iff the first matching Domain / DomainSuffix
-    /// rule has action `Deny`. Port and protocol filters and
-    /// `default_egress` are not consulted — only explicit deny rules
-    /// refuse a query.
-    pub fn dns_query_denied(&self, name: &DomainName) -> bool {
+    /// DNS queries do not have a resolved destination IP yet, so
+    /// IP-based destinations (`Cidr`, most `Group` variants) cannot
+    /// match here. `Group::Host` is the one exception: it names the
+    /// gateway forwarder the query is actually delivered to, so a
+    /// `Group::Host` rule is honored for DNS subject to its
+    /// protocol/port filter. Name-based destinations
+    /// (`Domain` / `DomainSuffix`) match the query name directly,
+    /// ignoring protocol and port filters that apply to the later
+    /// connection. `Any` rules still match the DNS transport's
+    /// protocol and port. If no rule matches, `default_egress`
+    /// applies.
+    pub fn evaluate_dns_query(&self, name: &DomainName, protocol: Protocol, port: u16) -> Action {
+        self.evaluate_dns_query_inner(Some(name), protocol, port)
+    }
+
+    /// Evaluate a DNS query whose name cannot be represented as a
+    /// [`DomainName`]. Only `Any` rules can match; otherwise the egress
+    /// default applies.
+    pub fn evaluate_dns_query_without_name(&self, protocol: Protocol, port: u16) -> Action {
+        self.evaluate_dns_query_inner(None, protocol, port)
+    }
+
+    fn evaluate_dns_query_inner(
+        &self,
+        name: Option<&DomainName>,
+        protocol: Protocol,
+        port: u16,
+    ) -> Action {
         for rule in &self.rules {
             if !matches!(rule.direction, Direction::Egress | Direction::Any) {
                 continue;
             }
             let matched = match &rule.destination {
-                Destination::Domain(d) => name.as_str() == d.as_str(),
-                Destination::DomainSuffix(s) => matches_suffix(name.as_str(), s.as_str()),
+                Destination::Any => rule_matches_protocol_and_port(rule, protocol, port),
+                Destination::Group(DestinationGroup::Host) => {
+                    rule_matches_protocol_and_port(rule, protocol, port)
+                }
+                Destination::Domain(d) => name == Some(d),
+                Destination::DomainSuffix(s) => {
+                    name.is_some_and(|name| matches_suffix(name.as_str(), s.as_str()))
+                }
                 _ => false,
             };
             if matched {
-                return rule.action == Action::Deny;
+                return rule.action;
             }
         }
-        false
+        self.default_egress
     }
 
     /// Single-name sugar over [`Self::deny_domains`].
@@ -617,6 +648,35 @@ impl Rule {
             action,
         }
     }
+
+    /// Allow plain DNS (UDP/53 and TCP/53) to the sandbox gateway, i.e.
+    /// the in-process DNS forwarder.
+    ///
+    /// Building block for deny-by-default policies: under the
+    /// DNS-as-egress evaluation rules, generic IP-based destinations
+    /// (`Cidr` / non-`Host` `Group`) cannot match a query because the
+    /// name has no resolved IP yet, so a policy of
+    /// `default_egress = Deny` with only those rules refuses every DNS
+    /// query. `Group::Host` is the one IP-based destination that *is*
+    /// honored at DNS-decision time, since it names the gateway
+    /// forwarder the query is delivered to.
+    ///
+    /// At connection-time this rule stays narrow: it only matches the
+    /// gateway IPs, not arbitrary private resolvers a guest might aim
+    /// at directly.
+    ///
+    /// DoT (TCP/853) is not included; if you need it, add an explicit
+    /// `Group::Host tcp/853` allow rule (and pair it with TLS
+    /// interception).
+    pub fn allow_dns() -> Self {
+        Self {
+            direction: Direction::Egress,
+            destination: Destination::Group(DestinationGroup::Host),
+            protocols: vec![Protocol::Udp, Protocol::Tcp],
+            ports: vec![PortRange::single(53)],
+            action: Action::Allow,
+        }
+    }
 }
 
 impl PortRange {
@@ -642,6 +702,16 @@ impl PortRange {
 //--------------------------------------------------------------------------------------------------
 // Functions
 //--------------------------------------------------------------------------------------------------
+
+fn rule_matches_protocol_and_port(rule: &Rule, protocol: Protocol, port: u16) -> bool {
+    if !rule.protocols.is_empty() && !rule.protocols.contains(&protocol) {
+        return false;
+    }
+    if !rule.ports.is_empty() && !rule.ports.iter().any(|range| range.contains(port)) {
+        return false;
+    }
+    true
+}
 
 /// Internal helper: does this rule match a flow's address/port/protocol?
 ///
@@ -698,7 +768,12 @@ impl From<bool> for DestinationMatch {
 /// `source`:
 ///
 /// - [`HostnameSource::Sni`]: byte-equality against the canonicalized
-///   SNI string (or label-aware suffix match).
+///   SNI string (or label-aware suffix match) AND a resolved-hostname
+///   cache binding tying the claimed name to `addr`. The cache check
+///   stops a guest from declaring an arbitrary SNI on an unresolved
+///   IP to pass a `Domain`-allow rule (lax-SNI server spoof). Genuine
+///   shared-CDN traffic still passes because the guest resolves the
+///   name before connecting, populating the cache.
 /// - [`HostnameSource::CacheOnly`]: query the resolved-hostname cache
 ///   on `shared` for any prior resolution of `addr` that matches.
 /// - [`HostnameSource::Deferred`]: short-circuits to
@@ -714,14 +789,20 @@ fn matches_destination_with_source(
         Destination::Cidr(network) => matches_cidr(network, addr).into(),
         Destination::Group(group) => matches_group(*group, addr, shared).into(),
         Destination::Domain(domain) => match source {
-            HostnameSource::Sni(name) => (name == domain.as_str()).into(),
+            HostnameSource::Sni(name) => (name == domain.as_str()
+                && shared.any_resolved_hostname(addr, |hostname| hostname == domain.as_str()))
+            .into(),
             HostnameSource::CacheOnly => shared
                 .any_resolved_hostname(addr, |hostname| hostname == domain.as_str())
                 .into(),
             HostnameSource::Deferred => DestinationMatch::Defer,
         },
         Destination::DomainSuffix(suffix) => match source {
-            HostnameSource::Sni(name) => matches_suffix(name, suffix.as_str()).into(),
+            HostnameSource::Sni(name) => (matches_suffix(name, suffix.as_str())
+                && shared.any_resolved_hostname(addr, |hostname| {
+                    matches_suffix(hostname, suffix.as_str())
+                }))
+            .into(),
             HostnameSource::CacheOnly => shared
                 .any_resolved_hostname(addr, |hostname| matches_suffix(hostname, suffix.as_str()))
                 .into(),
@@ -1351,7 +1432,7 @@ mod tests {
     }
 
     //----------------------------------------------------------------------------------------------
-    // dns_query_denied
+    // evaluate_dns_query
     //----------------------------------------------------------------------------------------------
 
     fn deny_domain_policy(dest: Destination) -> NetworkPolicy {
@@ -1367,37 +1448,49 @@ mod tests {
     }
 
     #[test]
-    fn dns_query_denied_matches_exact_domain() {
+    fn evaluate_dns_query_matches_exact_domain() {
         let policy = deny_domain_policy(Destination::Domain(name("evil.com")));
-        assert!(policy.dns_query_denied(&name("evil.com")));
-        assert!(!policy.dns_query_denied(&name("good.com")));
+        assert_eq!(
+            policy.evaluate_dns_query(&name("evil.com"), Protocol::Udp, 53),
+            Action::Deny
+        );
+        assert_eq!(
+            policy.evaluate_dns_query(&name("good.com"), Protocol::Udp, 53),
+            Action::Allow
+        );
     }
 
     #[test]
-    fn dns_query_denied_matches_suffix_apex_and_subdomain() {
+    fn evaluate_dns_query_matches_suffix_apex_and_subdomain() {
         let policy = deny_domain_policy(Destination::DomainSuffix(name(".evil.com")));
-        assert!(
-            policy.dns_query_denied(&name("evil.com")),
+        assert_eq!(
+            policy.evaluate_dns_query(&name("evil.com"), Protocol::Udp, 53),
+            Action::Deny,
             "apex must match"
         );
-        assert!(
-            policy.dns_query_denied(&name("foo.evil.com")),
+        assert_eq!(
+            policy.evaluate_dns_query(&name("foo.evil.com"), Protocol::Udp, 53),
+            Action::Deny,
             "subdomain must match"
         );
-        assert!(
-            policy.dns_query_denied(&name("deep.sub.evil.com")),
+        assert_eq!(
+            policy.evaluate_dns_query(&name("deep.sub.evil.com"), Protocol::Udp, 53),
+            Action::Deny,
             "deeper subdomain must match"
         );
     }
 
     #[test]
-    fn dns_query_denied_does_not_match_disjoint_suffix() {
+    fn evaluate_dns_query_does_not_match_disjoint_suffix() {
         let policy = deny_domain_policy(Destination::DomainSuffix(name(".evil.com")));
-        assert!(!policy.dns_query_denied(&name("notevil.com")));
+        assert_eq!(
+            policy.evaluate_dns_query(&name("notevil.com"), Protocol::Udp, 53),
+            Action::Allow
+        );
     }
 
     #[test]
-    fn dns_query_denied_ignores_cidr_group_any_rules() {
+    fn evaluate_dns_query_matches_any_but_not_ip_destinations() {
         let policy = NetworkPolicy {
             default_egress: Action::Allow,
             default_ingress: Action::Allow,
@@ -1407,11 +1500,77 @@ mod tests {
                 Rule::deny_egress(Destination::Group(DestinationGroup::Public)),
             ],
         };
-        assert!(!policy.dns_query_denied(&name("anything.example")));
+        assert_eq!(
+            policy.evaluate_dns_query(&name("anything.example"), Protocol::Udp, 53),
+            Action::Deny
+        );
+
+        let policy = NetworkPolicy {
+            default_egress: Action::Allow,
+            default_ingress: Action::Allow,
+            rules: vec![
+                Rule::deny_egress(Destination::Cidr("10.0.0.0/8".parse().unwrap())),
+                Rule::deny_egress(Destination::Group(DestinationGroup::Public)),
+            ],
+        };
+        assert_eq!(
+            policy.evaluate_dns_query(&name("anything.example"), Protocol::Udp, 53),
+            Action::Allow
+        );
     }
 
     #[test]
-    fn dns_query_denied_first_match_wins_when_allow_precedes_deny() {
+    fn evaluate_dns_query_group_host_grants_dns_under_deny_by_default() {
+        // `Group::Host` represents the gateway forwarder the query is
+        // delivered to, so it is the one IP-based destination honored
+        // at DNS-decision time. Its protocol/port filter still applies.
+        let policy = NetworkPolicy {
+            default_egress: Action::Deny,
+            default_ingress: Action::Allow,
+            rules: vec![Rule::allow_dns()],
+        };
+        assert_eq!(
+            policy.evaluate_dns_query(&name("example.com"), Protocol::Udp, 53),
+            Action::Allow
+        );
+        assert_eq!(
+            policy.evaluate_dns_query(&name("example.com"), Protocol::Tcp, 53),
+            Action::Allow
+        );
+        // DoT (TCP/853) is intentionally not covered by `allow_dns()`.
+        assert_eq!(
+            policy.evaluate_dns_query(&name("example.com"), Protocol::Tcp, 853),
+            Action::Deny
+        );
+    }
+
+    #[test]
+    fn evaluate_dns_query_group_host_respects_protocol_port_filter() {
+        // A `Group::Host udp/53` allow rule grants UDP DNS but not
+        // TCP fallback or DoT.
+        let policy = NetworkPolicy {
+            default_egress: Action::Deny,
+            default_ingress: Action::Allow,
+            rules: vec![Rule {
+                direction: Direction::Egress,
+                destination: Destination::Group(DestinationGroup::Host),
+                protocols: vec![Protocol::Udp],
+                ports: vec![PortRange::single(53)],
+                action: Action::Allow,
+            }],
+        };
+        assert_eq!(
+            policy.evaluate_dns_query(&name("example.com"), Protocol::Udp, 53),
+            Action::Allow
+        );
+        assert_eq!(
+            policy.evaluate_dns_query(&name("example.com"), Protocol::Tcp, 53),
+            Action::Deny
+        );
+    }
+
+    #[test]
+    fn evaluate_dns_query_first_match_wins_when_allow_precedes_deny() {
         let policy = NetworkPolicy {
             default_egress: Action::Allow,
             default_ingress: Action::Allow,
@@ -1421,15 +1580,19 @@ mod tests {
             ],
         };
         // Allow rule comes first; DNS resolution must proceed.
-        assert!(!policy.dns_query_denied(&name("evil.com")));
+        assert_eq!(
+            policy.evaluate_dns_query(&name("evil.com"), Protocol::Udp, 53),
+            Action::Allow
+        );
         // Deny suffix still catches subdomains the allow rule didn't cover.
-        assert!(policy.dns_query_denied(&name("foo.evil.com")));
+        assert_eq!(
+            policy.evaluate_dns_query(&name("foo.evil.com"), Protocol::Udp, 53),
+            Action::Deny
+        );
     }
 
     #[test]
-    fn dns_query_denied_ignores_port_and_protocol_filters() {
-        // A narrow rule (only TCP/443) must still refuse DNS — DNS does
-        // not carry a destination port.
+    fn evaluate_dns_query_domain_rules_ignore_port_and_protocol_filters() {
         let policy = NetworkPolicy {
             default_egress: Action::Allow,
             default_ingress: Action::Allow,
@@ -1441,50 +1604,140 @@ mod tests {
                 action: Action::Deny,
             }],
         };
-        assert!(policy.dns_query_denied(&name("evil.com")));
+        assert_eq!(
+            policy.evaluate_dns_query(&name("evil.com"), Protocol::Udp, 53),
+            Action::Deny
+        );
+        assert_eq!(
+            policy.evaluate_dns_query(&name("evil.com"), Protocol::Tcp, 443),
+            Action::Deny
+        );
+
+        let policy = NetworkPolicy {
+            default_egress: Action::Deny,
+            default_ingress: Action::Allow,
+            rules: vec![Rule {
+                direction: Direction::Egress,
+                destination: Destination::Domain(name("good.com")),
+                protocols: vec![Protocol::Tcp],
+                ports: vec![PortRange::single(443)],
+                action: Action::Allow,
+            }],
+        };
+        assert_eq!(
+            policy.evaluate_dns_query(&name("good.com"), Protocol::Udp, 53),
+            Action::Allow
+        );
     }
 
     #[test]
-    fn dns_query_denied_ignores_default_egress() {
-        // Deny-by-default with no Domain rules: DNS proceeds.
+    fn evaluate_dns_query_uses_default_egress() {
         let policy = NetworkPolicy {
             default_egress: Action::Deny,
             default_ingress: Action::Allow,
             rules: vec![],
         };
-        assert!(!policy.dns_query_denied(&name("anything.example")));
+        assert_eq!(
+            policy.evaluate_dns_query(&name("anything.example"), Protocol::Udp, 53),
+            Action::Deny
+        );
     }
 
     #[test]
-    fn dns_query_denied_skips_ingress_only_rules() {
+    fn evaluate_dns_query_allows_broad_udp_rule() {
+        let policy = NetworkPolicy {
+            default_egress: Action::Deny,
+            default_ingress: Action::Allow,
+            rules: vec![Rule {
+                direction: Direction::Egress,
+                destination: Destination::Any,
+                protocols: vec![Protocol::Udp],
+                ports: vec![],
+                action: Action::Allow,
+            }],
+        };
+        assert_eq!(
+            policy.evaluate_dns_query(&name("anything.example"), Protocol::Udp, 53),
+            Action::Allow
+        );
+        assert_eq!(
+            policy.evaluate_dns_query(&name("anything.example"), Protocol::Tcp, 53),
+            Action::Deny
+        );
+    }
+
+    #[test]
+    fn evaluate_dns_query_without_name_uses_any_rules_and_default() {
+        let policy = NetworkPolicy {
+            default_egress: Action::Deny,
+            default_ingress: Action::Allow,
+            rules: vec![Rule {
+                direction: Direction::Egress,
+                destination: Destination::Any,
+                protocols: vec![Protocol::Udp],
+                ports: vec![PortRange::single(53)],
+                action: Action::Allow,
+            }],
+        };
+        assert_eq!(
+            policy.evaluate_dns_query_without_name(Protocol::Udp, 53),
+            Action::Allow
+        );
+        assert_eq!(
+            policy.evaluate_dns_query_without_name(Protocol::Tcp, 53),
+            Action::Deny
+        );
+
+        let policy = NetworkPolicy {
+            default_egress: Action::Deny,
+            default_ingress: Action::Allow,
+            rules: vec![Rule::allow_egress(Destination::Domain(name("example.com")))],
+        };
+        assert_eq!(
+            policy.evaluate_dns_query_without_name(Protocol::Udp, 53),
+            Action::Deny
+        );
+    }
+
+    #[test]
+    fn evaluate_dns_query_skips_ingress_only_rules() {
         let policy = NetworkPolicy {
             default_egress: Action::Allow,
             default_ingress: Action::Allow,
             rules: vec![Rule::deny_ingress(Destination::Domain(name("evil.com")))],
         };
-        assert!(!policy.dns_query_denied(&name("evil.com")));
+        assert_eq!(
+            policy.evaluate_dns_query(&name("evil.com"), Protocol::Udp, 53),
+            Action::Allow
+        );
     }
 
     #[test]
-    fn dns_query_denied_any_direction_rule_applies() {
+    fn evaluate_dns_query_any_direction_rule_applies() {
         let policy = NetworkPolicy {
             default_egress: Action::Allow,
             default_ingress: Action::Allow,
             rules: vec![Rule::deny_any(Destination::Domain(name("evil.com")))],
         };
-        assert!(policy.dns_query_denied(&name("evil.com")));
+        assert_eq!(
+            policy.evaluate_dns_query(&name("evil.com"), Protocol::Udp, 53),
+            Action::Deny
+        );
     }
 
     //----------------------------------------------------------------------------------------------
     // evaluate_egress_with_source / HostnameSource
     //----------------------------------------------------------------------------------------------
 
-    /// Cache says IP X corresponds to `evil.com`; policy allows
-    /// `pypi.org`; SNI says `pypi.org`. SNI must take precedence over
-    /// the cache and the connection must be allowed. (Fixes over-block.)
+    /// Shared-CDN: IP X resolved to both `evil.com` and `pypi.org`;
+    /// policy allows `pypi.org`; SNI claims `pypi.org`. SNI matches the
+    /// rule AND the cache has a `pypi.org` binding for X, so the
+    /// connection is allowed. Legitimate path the SNI+cache AND-check
+    /// must not block.
     #[test]
-    fn hostname_source_sni_ignores_dns_cache() {
+    fn hostname_source_sni_allows_when_cache_pins_claimed_name() {
         let shared = shared_with_host("evil.com", PYPI_V4);
+        cache(&shared, "pypi.org", ResolvedHostnameFamily::Ipv4, PYPI_V4);
         let policy = allow_rule(Destination::Domain(name("pypi.org")));
         let eval = policy.evaluate_egress_with_source(
             sock(PYPI_V4, 443),
@@ -1495,11 +1748,46 @@ mod tests {
         assert_eq!(eval, EgressEvaluation::Allow);
     }
 
-    /// Cache says IP X corresponds to `pypi.org`; policy allows
-    /// `pypi.org`; SNI says `evil.com`. The cache would over-allow,
-    /// but SNI is authoritative — connection denied. (Fixes over-allow.)
+    /// SNI spoof: cache has `evil.com` only for IP X; the guest aims
+    /// at X and claims SNI `pypi.org`. Byte-equality with the rule
+    /// would pass, but no DNS lookup ever bound `pypi.org` to X, so
+    /// the cache check fails and the connection is denied. This is
+    /// the lax-SNI server spoof.
     #[test]
-    fn hostname_source_sni_denies_when_cache_would_allow() {
+    fn hostname_source_sni_denies_spoofed_claim_on_unrelated_ip() {
+        let shared = shared_with_host("evil.com", PYPI_V4);
+        let policy = allow_rule(Destination::Domain(name("pypi.org")));
+        let eval = policy.evaluate_egress_with_source(
+            sock(PYPI_V4, 443),
+            Protocol::Tcp,
+            &shared,
+            HostnameSource::Sni("pypi.org"),
+        );
+        assert_eq!(eval, EgressEvaluation::Deny);
+    }
+
+    /// Hard-coded IP, no DNS lookup at all: cache is empty for X.
+    /// Even if SNI matches the rule's domain, with no binding the
+    /// connection is denied. Same spoof pattern, simpler form.
+    #[test]
+    fn hostname_source_sni_denies_when_cache_has_no_binding_for_ip() {
+        let shared = SharedState::new(4);
+        let policy = allow_rule(Destination::Domain(name("pypi.org")));
+        let eval = policy.evaluate_egress_with_source(
+            sock(PYPI_V4, 443),
+            Protocol::Tcp,
+            &shared,
+            HostnameSource::Sni("pypi.org"),
+        );
+        assert_eq!(eval, EgressEvaluation::Deny);
+    }
+
+    /// Cache says IP X corresponds to `pypi.org`; policy allows
+    /// `pypi.org`; SNI says `evil.com`. SNI byte-equality fails
+    /// against the rule, so the connection is denied regardless of
+    /// the cache.
+    #[test]
+    fn hostname_source_sni_denies_when_claim_does_not_match_rule() {
         let shared = shared_with_host("pypi.org", PYPI_V4);
         let policy = allow_rule(Destination::Domain(name("pypi.org")));
         let eval = policy.evaluate_egress_with_source(
@@ -1639,10 +1927,44 @@ mod tests {
     }
 
     /// `Sni` against a `DomainSuffix` rule: label-aware suffix match
-    /// applied directly to the SNI string, no cache consulted.
+    /// AND a cache binding tying any name under the suffix to the IP.
+    /// Genuine traffic that resolved the name first passes.
     #[test]
-    fn hostname_source_sni_matches_domain_suffix() {
-        let shared = SharedState::new(4); // empty cache
+    fn hostname_source_sni_matches_domain_suffix_with_cache_binding() {
+        let shared = shared_with_host("files.pythonhosted.org", FILES_V4);
+        let policy = allow_rule(Destination::DomainSuffix(name(".pythonhosted.org")));
+        let eval = policy.evaluate_egress_with_source(
+            sock(FILES_V4, 443),
+            Protocol::Tcp,
+            &shared,
+            HostnameSource::Sni("files.pythonhosted.org"),
+        );
+        assert_eq!(eval, EgressEvaluation::Allow);
+    }
+
+    /// `Sni` against a `DomainSuffix` rule with no cache binding for
+    /// the IP. SNI byte-matches the suffix but no DNS lookup tied any
+    /// `*.pythonhosted.org` name to the destination — denied.
+    #[test]
+    fn hostname_source_sni_denies_domain_suffix_without_cache_binding() {
+        let shared = SharedState::new(4);
+        let policy = allow_rule(Destination::DomainSuffix(name(".pythonhosted.org")));
+        let eval = policy.evaluate_egress_with_source(
+            sock(FILES_V4, 443),
+            Protocol::Tcp,
+            &shared,
+            HostnameSource::Sni("files.pythonhosted.org"),
+        );
+        assert_eq!(eval, EgressEvaluation::Deny);
+    }
+
+    /// `Sni` against a `DomainSuffix` rule where the cache binds a
+    /// sibling subdomain. The suffix-allow intent covers any name
+    /// under the suffix, so an IP resolved as `other.pythonhosted.org`
+    /// can serve a different subdomain via SNI. Real shared-CDN case.
+    #[test]
+    fn hostname_source_sni_domain_suffix_allows_sibling_cache_binding() {
+        let shared = shared_with_host("other.pythonhosted.org", FILES_V4);
         let policy = allow_rule(Destination::DomainSuffix(name(".pythonhosted.org")));
         let eval = policy.evaluate_egress_with_source(
             sock(FILES_V4, 443),

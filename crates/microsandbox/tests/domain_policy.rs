@@ -173,9 +173,10 @@ async fn domain_policy_allows_whitelisted_https() {
     };
     let sb = setup_alpine(name, policy).await;
 
-    // DNS resolution itself must succeed: the interceptor bypasses
-    // the egress policy for queries aimed at the gateway, so the
-    // guest can populate its cache before the policy-gated connect.
+    // DNS resolution must succeed for `cloudflare.com`: the Domain
+    // allow rule matches by name at DNS-decision time (ignoring its
+    // proto/port filter), so the query is permitted and the guest's
+    // cache is populated before the policy-gated connect.
     let dns_out = dns_lookup(&sb, "cloudflare.com").await;
     assert!(
         !dns_out.is_empty(),
@@ -288,35 +289,41 @@ async fn domain_policy_deny_suffix_refuses_dns_apex_and_subdomain() {
 }
 
 /// SNI-based enforcement on shared-CDN IPs (the over-allow fix).
-/// Allow only `files.pythonhosted.org`, resolve both that name and
-/// `pypi.org` (often co-located on Fastly), and assert HTTPS to
-/// `pypi.org` fails while `files.pythonhosted.org` succeeds.
+/// Allow only `files.pythonhosted.org` for HTTPS plus DNS via the
+/// gateway, resolve both that name and `pypi.org` (often co-located
+/// on Fastly), and assert HTTPS to `pypi.org` fails while
+/// `files.pythonhosted.org` succeeds.
 #[msb_test]
 async fn domain_policy_sni_disambiguates_shared_cdn_ip() {
     let name = "net-domain-policy-sni-shared-ip";
     let policy = NetworkPolicy {
         default_egress: Action::Deny,
         default_ingress: Action::Allow,
-        // Allow only files.pythonhosted.org. pypi.org has no allow rule.
-        rules: vec![allow_domain_https("files.pythonhosted.org")],
+        // Allow DNS for any name via the gateway forwarder, but only
+        // permit HTTPS to files.pythonhosted.org. pypi.org has no
+        // connection-level allow rule.
+        rules: vec![
+            Rule::allow_dns(),
+            allow_domain_https("files.pythonhosted.org"),
+        ],
     };
     let sb = setup_alpine(name, policy).await;
 
     // Resolve both names so the DNS cache associates each with its IP
-    // (and any shared Fastly addresses with both names). The
-    // disallowed name's resolution succeeds because there is no deny
-    // rule for it — only its connection is gated. Retry the priming
+    // (and any shared Fastly addresses with both names). Both lookups
+    // succeed because `allow_dns()` permits DNS regardless of name;
+    // SNI then disambiguates at connect time. Retry the priming
     // lookups so a single transient forward doesn't leave curl
     // resolving from scratch.
     let pypi_ip = dns_lookup(&sb, "pypi.org").await;
     let files_ip = dns_lookup(&sb, "files.pythonhosted.org").await;
     assert!(
         !pypi_ip.is_empty(),
-        "pypi.org should resolve under default-allow"
+        "pypi.org should resolve when DNS is explicitly allowed"
     );
     assert!(
         !files_ip.is_empty(),
-        "files.pythonhosted.org should resolve under default-allow"
+        "files.pythonhosted.org should resolve when DNS is explicitly allowed"
     );
 
     // Allowed name: SNI matches the rule, connection proceeds.
@@ -333,6 +340,69 @@ async fn domain_policy_sni_disambiguates_shared_cdn_ip() {
     assert!(
         curl_failed(&denied),
         "pypi.org should be denied even on shared Fastly IP: got `{denied}`"
+    );
+
+    sb.stop_and_wait().await.expect("stop");
+    let _ = Sandbox::remove(name).await;
+}
+
+/// SNI spoofing defense: claiming an allowed name in the ClientHello
+/// while connecting to an IP no DNS lookup ever tied to that name
+/// must be denied. Legit traffic for the same allowed name (resolved
+/// via the gateway, cache populated) must still pass.
+#[msb_test]
+async fn domain_policy_sni_spoof_on_unrelated_ip_is_denied() {
+    let name = "net-domain-policy-sni-spoof";
+    let policy = NetworkPolicy {
+        default_egress: Action::Deny,
+        default_ingress: Action::Allow,
+        // DNS opens via the gateway, HTTPS allowed only for example.com.
+        rules: vec![Rule::allow_dns(), allow_domain_https("example.com")],
+    };
+    let sb = setup_alpine(name, policy).await;
+
+    // Prime an unrelated CDN's IP into the cache under its real name.
+    // The same IP will be reused as the spoof target; nothing will
+    // ever bind `example.com` to it.
+    let spoof_ip = dns_lookup(&sb, "files.pythonhosted.org").await;
+    assert!(
+        !spoof_ip.is_empty(),
+        "shared-cdn DNS lookup should resolve under allow_dns; got empty"
+    );
+
+    // Honest path: legitimate fetch of example.com (DNS via gateway,
+    // example.com bound to its real IP in the cache) must succeed.
+    // Establishes that the SNI+cache AND-check doesn't block normal
+    // traffic before we test the spoof denial.
+    let honest = probe_https_with_retry(&sb, "https://example.com/").await;
+    assert!(
+        reached_server(&honest),
+        "honest example.com fetch should be allowed: got `{honest}`"
+    );
+
+    // Spoof: force curl to skip DNS and connect to the unrelated CDN
+    // IP while sending `Host: example.com` and SNI=example.com.
+    // The SNI byte-matches the rule, but no DNS lookup ever bound
+    // `example.com` to this IP, so the cache check fails and the
+    // proxy refuses to relay.
+    let cmd = format!(
+        "tmp=$(mktemp); \
+         code=$(curl -sS --max-time 30 -o /dev/null \
+                -w '%{{http_code}}' \
+                --resolve example.com:443:{spoof_ip} \
+                https://example.com/ 2>\"$tmp\"); \
+         exit=$?; \
+         err=$(tr '\\n' ' ' <\"$tmp\"; rm -f \"$tmp\"); \
+         case \"$code\" in \
+             000|\"\") printf 'FAIL exit=%s err=%s' \"$exit\" \"$err\" ;; \
+             *) printf '%s' \"$code\" ;; \
+         esac"
+    );
+    let spoof = sb.shell(&cmd).await.expect("curl spoof shell");
+    let spoof_out = spoof.stdout().unwrap_or_default().trim().to_string();
+    assert!(
+        curl_failed(&spoof_out),
+        "SNI spoof on unrelated IP {spoof_ip} should be denied: got `{spoof_out}`"
     );
 
     sb.stop_and_wait().await.expect("stop");
