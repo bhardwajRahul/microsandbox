@@ -129,6 +129,11 @@ pub enum ExecEvent {
     /// denied, etc.). Distinct from `Exited` — `Failed` means the
     /// user code never ran. Terminal: no further events follow.
     Failed(microsandbox_protocol::exec::ExecFailed),
+
+    /// A stdin write to the child failed (e.g. broken pipe). Non-terminal:
+    /// the session keeps running and may still emit further output and
+    /// an `Exited` event.
+    StdinError(microsandbox_protocol::exec::ExecStdinError),
 }
 
 /// Sink for writing to a running process's stdin.
@@ -379,6 +384,7 @@ impl ExecHandle {
                 ExecEvent::Failed(payload) => {
                     return Err(crate::MicrosandboxError::ExecFailed(payload));
                 }
+                ExecEvent::StdinError(_) => {}
             }
         }
 
