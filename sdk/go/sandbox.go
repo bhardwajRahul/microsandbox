@@ -26,8 +26,22 @@ func CreateSandbox(ctx context.Context, name string, opts ...SandboxOption) (*Sa
 		opt(&o)
 	}
 
+	ffiOpts := buildFFICreateOptions(o)
+
+	inner, err := ffi.CreateSandbox(ctx, name, ffiOpts)
+	if err != nil {
+		return nil, wrapFFI(err)
+	}
+	return &Sandbox{inner: inner}, nil
+}
+
+// buildFFICreateOptions translates SandboxConfig into the FFI wire shape.
+// Extracted so tests can assert the JSON envelope without booting the runtime.
+func buildFFICreateOptions(o SandboxConfig) ffi.CreateOptions {
 	ffiOpts := ffi.CreateOptions{
 		Image:           o.Image,
+		ImageFstype:     o.ImageFstype,
+		Snapshot:        o.Snapshot,
 		MemoryMiB:       o.MemoryMiB,
 		CPUs:            o.CPUs,
 		Workdir:         o.Workdir,
@@ -44,8 +58,6 @@ func CreateSandbox(ctx context.Context, name string, opts ...SandboxOption) (*Sa
 		PullPolicy:      string(o.PullPolicy),
 		MaxDurationSecs: durationSecsCeil(o.MaxDuration),
 		IdleTimeoutSecs: durationSecsCeil(o.IdleTimeout),
-		StopSignal:      o.StopSignal,
-		Labels:          o.Labels,
 		Ports:           o.Ports,
 		PortsUDP:        o.PortsUDP,
 	}
@@ -119,11 +131,7 @@ func CreateSandbox(ctx context.Context, name string, opts ...SandboxOption) (*Sa
 		})
 	}
 
-	inner, err := ffi.CreateSandbox(ctx, name, ffiOpts)
-	if err != nil {
-		return nil, wrapFFI(err)
-	}
-	return &Sandbox{inner: inner}, nil
+	return ffiOpts
 }
 
 // durationSecsCeil rounds a Duration up to whole seconds. Sub-second values
@@ -374,6 +382,25 @@ func (h *SandboxHandle) Kill(ctx context.Context) error {
 // Remove deletes the sandbox's persisted state. The sandbox must be stopped.
 func (h *SandboxHandle) Remove(ctx context.Context) error {
 	return RemoveSandbox(ctx, h.name)
+}
+
+// Snapshot captures this stopped sandbox under a bare name in the default
+// snapshots directory.
+func (h *SandboxHandle) Snapshot(ctx context.Context, name string) (*SnapshotArtifact, error) {
+	info, err := ffi.SandboxHandleSnapshot(ctx, h.name, name)
+	if err != nil {
+		return nil, wrapFFI(err)
+	}
+	return snapshotFromInfo(info), nil
+}
+
+// SnapshotTo captures this stopped sandbox to an explicit artifact directory.
+func (h *SandboxHandle) SnapshotTo(ctx context.Context, path string) (*SnapshotArtifact, error) {
+	info, err := ffi.SandboxHandleSnapshotTo(ctx, h.name, path)
+	if err != nil {
+		return nil, wrapFFI(err)
+	}
+	return snapshotFromInfo(info), nil
 }
 
 // ---------------------------------------------------------------------------

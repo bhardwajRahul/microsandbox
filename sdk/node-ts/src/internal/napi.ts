@@ -125,7 +125,7 @@ export interface NapiSandboxBuilderSetters {
   volume(guest: string, configure: (b: any) => any): this;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   patch(configure: (b: any) => any): this;
-  build(): string;
+  build(): Promise<string>;
 }
 
 export interface NapiSandboxBuilder extends NapiSandboxBuilderSetters {

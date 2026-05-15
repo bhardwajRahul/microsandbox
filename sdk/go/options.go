@@ -8,39 +8,39 @@ import "time"
 // SandboxConfig is exported for callers that prefer to build a config value
 // directly and pass it via WithConfig.
 type SandboxConfig struct {
-	Image           string
-	MemoryMiB       uint32
-	CPUs            uint8
-	Workdir         string
-	Shell           string
-	Hostname        string
-	User            string
-	Replace         bool
+	Image       string
+	ImageFstype string
+	Snapshot    string
+	MemoryMiB   uint32
+	CPUs        uint8
+	Workdir     string
+	Shell       string
+	Hostname    string
+	User        string
+	Replace     bool
 	// ReplaceWithGrace, if non-nil, sets a specific grace period
 	// between SIGTERM and SIGKILL when replacing an existing sandbox.
 	// nil means "use the runtime default" (10s when Replace is set).
 	// Setting this implies Replace=true. Zero is honored — it skips
 	// SIGTERM and SIGKILLs immediately. Use WithReplaceWithGrace.
 	ReplaceWithGrace *time.Duration
-	Env             map[string]string
-	Detached        bool
-	Entrypoint      []string
-	Init            *InitConfig
-	LogLevel        LogLevel
-	QuietLogs       bool
-	Scripts         map[string]string
-	PullPolicy      PullPolicy
-	MaxDuration     time.Duration
-	IdleTimeout     time.Duration
-	StopSignal      string
-	Labels          map[string]string
-	RegistryAuth    *RegistryAuth
-	Ports           map[uint16]uint16 // host port → guest port (TCP)
-	PortsUDP        map[uint16]uint16 // host port → guest port (UDP)
-	Network         *NetworkConfig
-	Secrets         []SecretEntry
-	Patches         []PatchConfig
-	Volumes         map[string]MountConfig // guest path → mount config
+	Env              map[string]string
+	Detached         bool
+	Entrypoint       []string
+	Init             *InitConfig
+	LogLevel         LogLevel
+	QuietLogs        bool
+	Scripts          map[string]string
+	PullPolicy       PullPolicy
+	MaxDuration      time.Duration
+	IdleTimeout      time.Duration
+	RegistryAuth     *RegistryAuth
+	Ports            map[uint16]uint16 // host port → guest port (TCP)
+	PortsUDP         map[uint16]uint16 // host port → guest port (UDP)
+	Network          *NetworkConfig
+	Secrets          []SecretEntry
+	Patches          []PatchConfig
+	Volumes          map[string]MountConfig // guest path → mount config
 }
 
 // SandboxOption is a functional option for configuring a sandbox.
@@ -49,6 +49,22 @@ type SandboxOption func(*SandboxConfig)
 // WithImage sets the container image to use (e.g. "python:3.12").
 func WithImage(image string) SandboxOption {
 	return func(o *SandboxConfig) { o.Image = image }
+}
+
+// WithImageDisk sets a disk image as the sandbox root filesystem and provides
+// an optional inner filesystem hint (for example "ext4"). The disk format is
+// inferred from the path extension (.qcow2, .raw, or .vmdk).
+func WithImageDisk(path string, fstype string) SandboxOption {
+	return func(o *SandboxConfig) {
+		o.Image = path
+		o.ImageFstype = fstype
+	}
+}
+
+// WithSnapshot boots from a snapshot artifact by bare name or filesystem path.
+// It is mutually exclusive with WithImage.
+func WithSnapshot(pathOrName string) SandboxOption {
+	return func(o *SandboxConfig) { o.Snapshot = pathOrName }
 }
 
 // WithMemory sets the memory limit in MiB.
@@ -180,31 +196,11 @@ func WithIdleTimeout(d time.Duration) SandboxOption {
 	return func(o *SandboxConfig) { o.IdleTimeout = d }
 }
 
-// WithStopSignal overrides the signal sent on graceful stop (defaults to SIGTERM).
-// Pass standard names like "SIGTERM" or "SIGINT".
-func WithStopSignal(sig string) SandboxOption {
-	return func(o *SandboxConfig) { o.StopSignal = sig }
-}
-
 // WithRegistryAuth sets credentials for pulling private OCI images.
 func WithRegistryAuth(auth RegistryAuth) SandboxOption {
 	return func(o *SandboxConfig) {
 		a := auth
 		o.RegistryAuth = &a
-	}
-}
-
-// WithLabels attaches key-value labels to the sandbox config. They merge on
-// top of any image-level labels (user values win on conflict). Multiple calls
-// merge; later keys overwrite earlier ones.
-func WithLabels(labels map[string]string) SandboxOption {
-	return func(o *SandboxConfig) {
-		if o.Labels == nil {
-			o.Labels = make(map[string]string, len(labels))
-		}
-		for k, v := range labels {
-			o.Labels[k] = v
-		}
 	}
 }
 

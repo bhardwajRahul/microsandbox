@@ -14,6 +14,25 @@ func TestWithImage(t *testing.T) {
 	}
 }
 
+func TestWithImageDisk(t *testing.T) {
+	o := SandboxConfig{}
+	WithImageDisk("./alpine.raw", "ext4")(&o)
+	if o.Image != "./alpine.raw" {
+		t.Errorf("Image = %q, want %q", o.Image, "./alpine.raw")
+	}
+	if o.ImageFstype != "ext4" {
+		t.Errorf("ImageFstype = %q, want %q", o.ImageFstype, "ext4")
+	}
+}
+
+func TestWithSnapshot(t *testing.T) {
+	o := SandboxConfig{}
+	WithSnapshot("after-pip-install")(&o)
+	if o.Snapshot != "after-pip-install" {
+		t.Errorf("got %q, want %q", o.Snapshot, "after-pip-install")
+	}
+}
+
 func TestWithMemory(t *testing.T) {
 	o := SandboxConfig{}
 	WithMemory(512)(&o)
@@ -474,24 +493,6 @@ func TestWithMaxDurationAndIdleTimeout(t *testing.T) {
 	}
 	if o.IdleTimeout != 30*time.Second {
 		t.Errorf("IdleTimeout: got %v", o.IdleTimeout)
-	}
-}
-
-func TestWithStopSignal(t *testing.T) {
-	o := SandboxConfig{}
-	WithStopSignal("SIGINT")(&o)
-	if o.StopSignal != "SIGINT" {
-		t.Errorf("StopSignal: got %q", o.StopSignal)
-	}
-}
-
-func TestWithLabelsMerge(t *testing.T) {
-	o := SandboxConfig{}
-	WithLabels(map[string]string{"team": "agents"})(&o)
-	WithLabels(map[string]string{"team": "platform", "tier": "prod"})(&o)
-	want := map[string]string{"team": "platform", "tier": "prod"}
-	if !reflect.DeepEqual(o.Labels, want) {
-		t.Errorf("Labels: got %v want %v", o.Labels, want)
 	}
 }
 
