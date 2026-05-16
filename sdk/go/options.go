@@ -332,6 +332,14 @@ type NetworkConfig struct {
 	// Ports publishes host TCP ports into the sandbox (host→guest).
 	Ports map[uint16]uint16
 
+	// IPv4Pool is used to derive per-sandbox /30 guest subnets.
+	// Defaults to "172.16.0.0/12".
+	IPv4Pool string
+
+	// IPv6Pool is used to derive per-sandbox /64 guest prefixes.
+	// Defaults to "fd42:6d73:62::/48".
+	IPv6Pool string
+
 	// MaxConnections caps concurrent network connections from the sandbox.
 	MaxConnections *uint
 

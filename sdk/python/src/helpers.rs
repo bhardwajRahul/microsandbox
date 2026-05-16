@@ -767,6 +767,20 @@ fn apply_network(
         builder = builder.network(|n| n.max_connections(max));
     }
 
+    // Guest IPv4 pool.
+    if let Some(raw) = extract_opt::<String>(net, "ipv4_pool")? {
+        let pool: ipnetwork::Ipv4Network = raw.parse().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("invalid ipv4_pool {raw:?}: {e}"))
+        })?;
+        builder = builder.network(|n| n.ipv4_pool(pool));
+    }
+    if let Some(raw) = extract_opt::<String>(net, "ipv6_pool")? {
+        let pool: ipnetwork::Ipv6Network = raw.parse().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("invalid ipv6_pool {raw:?}: {e}"))
+        })?;
+        builder = builder.network(|n| n.ipv6_pool(pool));
+    }
+
     // Host-CA trust (ship host's extra CAs into the guest at boot).
     if let Some(trust) = extract_opt::<bool>(net, "trust_host_cas")? {
         builder = builder.network(move |n| n.trust_host_cas(trust));

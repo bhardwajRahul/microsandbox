@@ -159,6 +159,8 @@ func buildFFINetwork(n *NetworkConfig) *ffi.NetworkOptions {
 		DenyDomains:         n.DenyDomains,
 		DenyDomainSuffixes:  n.DenyDomainSuffixes,
 		Ports:               n.Ports,
+		IPv4Pool:            n.IPv4Pool,
+		IPv6Pool:            n.IPv6Pool,
 		MaxConnections:      n.MaxConnections,
 		OnSecretViolation:   string(n.OnSecretViolation),
 		TrustHostCAs:        n.TrustHostCAs,
