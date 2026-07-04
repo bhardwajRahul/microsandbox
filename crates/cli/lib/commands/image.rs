@@ -399,7 +399,7 @@ pub(crate) async fn pull_if_missing(reference: &str, quiet: bool) -> anyhow::Res
 pub async fn run_list(args: ImageListArgs) -> anyhow::Result<()> {
     let backend = crate::commands::common::resolve_local_backend()?;
     let local = crate::commands::common::local_backend_ref(&backend)?;
-    let images = Image::list(local).await?;
+    let images = Image::list_local(local).await?;
 
     if args.format.as_deref() == Some("json") {
         let entries: Vec<serde_json::Value> = images
@@ -460,7 +460,7 @@ pub async fn run_list(args: ImageListArgs) -> anyhow::Result<()> {
 pub async fn run_inspect(args: ImageInspectArgs) -> anyhow::Result<()> {
     let backend = crate::commands::common::resolve_local_backend()?;
     let local = crate::commands::common::local_backend_ref(&backend)?;
-    let detail = Image::inspect(local, &args.reference).await?;
+    let detail = Image::inspect_local(local, &args.reference).await?;
 
     if args.format.as_deref() == Some("json") {
         let layers_json: Vec<serde_json::Value> = detail
@@ -585,6 +585,34 @@ pub async fn run_load(args: ImageLoadArgs) -> anyhow::Result<()> {
     let backend = crate::commands::common::resolve_local_backend()?;
     let local = crate::commands::common::local_backend_ref(&backend)?;
     let cache_dir = local.cache_dir();
+    // Start the progress display before reading the archive, so a piped
+    // `docker save | msb load` shows activity while stdin is consumed.
+    let quiet = args.quiet;
+    let label = args
+        .tag
+        .first()
+        .cloned()
+        .or_else(|| {
+            args.input
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "archive".to_string());
+    let (progress, sender) = microsandbox_image::progress_channel();
+    let (display_ready_tx, display_ready_rx) = mpsc::sync_channel(1);
+    let display_thread = std::thread::spawn(move || -> anyhow::Result<()> {
+        let mut display = ui::PullProgressDisplay::load(&label, quiet);
+        let _ = display_ready_tx.send(());
+        let mut receiver = progress.into_receiver();
+        while let Some(event) = receiver.blocking_recv() {
+            display.handle_event(event);
+        }
+        display.finish();
+        Ok(())
+    });
+    let _ = display_ready_rx.recv();
+
     let temp_input;
     let input_path = if let Some(path) = args.input.as_ref() {
         path
@@ -602,9 +630,17 @@ pub async fn run_load(args: ImageLoadArgs) -> anyhow::Result<()> {
         input_path,
         ImageLoadOptions {
             tags: args.tag.clone(),
+            progress: Some(sender),
         },
     )
-    .await?;
+    .await;
+
+    match display_thread.join() {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::warn!(error = %error, "failed to render load progress"),
+        Err(_) => tracing::warn!("load progress thread panicked"),
+    }
+    let loaded = loaded?;
 
     for image in &loaded {
         Image::persist(local, &image.reference, image.metadata.clone()).await?;
@@ -704,7 +740,7 @@ pub async fn run_remove(args: ImageRemoveArgs) -> anyhow::Result<()> {
             ui::Spinner::start("Removing", reference)
         };
 
-        match Image::remove(local, reference, args.force).await {
+        match Image::remove_local(local, reference, args.force).await {
             Ok(()) => {
                 spinner.finish_success("Removed");
             }
@@ -748,7 +784,7 @@ pub async fn run_prune(args: ImagePruneArgs) -> anyhow::Result<()> {
         }
     }
 
-    let report = Image::prune(local).await?;
+    let report = Image::prune_local(local).await?;
 
     if args.format.as_deref() == Some("json") {
         let json = serde_json::json!({

@@ -91,10 +91,6 @@
 > ```
 >
 > ```sh
-> winget install SuperRadCompany.Microsandbox
-> ```
->
-> ```sh
 > npm i -g microsandbox
 > ```
 >
@@ -122,7 +118,7 @@
 >
 > - <img height="14" src="https://api.iconify.design/simple-icons:apple.svg?color=%23A770EF" alt="macOS"> **macOS**: Apple Silicon.
 > - <img height="14" src="https://api.iconify.design/simple-icons:linux.svg?color=%23A770EF" alt="Linux"> **Linux**: KVM enabled.
-> - <img height="14" src="https://api.iconify.design/simple-icons:windows.svg?color=%23A770EF" alt="Windows"> **Windows**: Windows 10 or later with WHP enabled.
+> - <img height="14" src="https://api.iconify.design/simple-icons:windows.svg?color=%23A770EF" alt="Windows"> **Windows**: WHP enabled.
 >
 > **Warning**: Microsandbox is still **beta software**. Expect breaking changes, missing features, and rough edges.
 

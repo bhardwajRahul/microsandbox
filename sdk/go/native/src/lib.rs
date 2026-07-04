@@ -53,7 +53,7 @@ use microsandbox::{
     AgentBridge, LogLevel, MicrosandboxError, RegistryAuth, Sandbox, Snapshot, UpperVerifyStatus,
     logs::{LogOptions, LogSource},
     sandbox::{
-        FsEntryKind, PullPolicy, SecurityProfile, all_sandbox_metrics,
+        FsEntryKind, PullPolicy, SecurityProfile, all_sandbox_metrics_local,
         exec::{ExecEvent, ExecHandle, ExecSink},
         fs::{FsReadStream, FsWriteSink},
         ssh::{SftpClient, SshClient, SshServer, SshStdioStream},
@@ -810,6 +810,24 @@ struct TlsOpts {
     /// Extra CA certificates to trust for upstream verification.
     #[serde(default)]
     upstream_ca_certs: Vec<String>,
+    /// Host-scoped CA certificates to trust for upstream verification.
+    #[serde(default)]
+    scoped_upstream_ca_certs: Vec<ScopedUpstreamCaCertOpts>,
+    /// Host-scoped upstream certificate verification overrides.
+    #[serde(default)]
+    scoped_verify_upstream: Vec<ScopedVerifyUpstreamOpts>,
+}
+
+#[derive(Clone, serde::Deserialize, Default)]
+struct ScopedUpstreamCaCertOpts {
+    pattern: String,
+    path: String,
+}
+
+#[derive(Clone, serde::Deserialize, Default)]
+struct ScopedVerifyUpstreamOpts {
+    pattern: String,
+    verify: bool,
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -1232,6 +1250,8 @@ fn apply_network(
         let ca_cert = tls.ca_cert.clone();
         let ca_key = tls.ca_key.clone();
         let upstream_ca = tls.upstream_ca_certs.clone();
+        let scoped_upstream_ca = tls.scoped_upstream_ca_certs.clone();
+        let scoped_verify_upstream = tls.scoped_verify_upstream.clone();
         builder = builder.network(move |n| {
             n.tls(move |mut t| {
                 for domain in &bypass {
@@ -1254,6 +1274,12 @@ fn apply_network(
                 }
                 for path in &upstream_ca {
                     t = t.upstream_ca_cert(path);
+                }
+                for scoped in &scoped_upstream_ca {
+                    t = t.upstream_ca_cert_for(&scoped.pattern, &scoped.path);
+                }
+                for scoped in &scoped_verify_upstream {
+                    t = t.verify_upstream_for(&scoped.pattern, scoped.verify);
                 }
                 t
             })
@@ -4461,7 +4487,9 @@ pub unsafe extern "C" fn msb_all_sandbox_metrics(
             let local = backend
                 .as_local()
                 .ok_or_else(|| FfiError::invalid_argument("metrics require a local backend"))?;
-            let map = all_sandbox_metrics(local).await.map_err(FfiError::from)?;
+            let map = all_sandbox_metrics_local(local)
+                .await
+                .map_err(FfiError::from)?;
             let mut sandboxes = serde_json::Map::with_capacity(map.len());
             for (name, metrics) in &map {
                 sandboxes.insert(name.clone(), metrics_json(metrics));
@@ -4595,7 +4623,7 @@ pub unsafe extern "C" fn msb_image_get(
             let local = backend
                 .as_local()
                 .ok_or_else(|| FfiError::invalid_argument("image ops require a local backend"))?;
-            let h = microsandbox::image::Image::get(local, &reference)
+            let h = microsandbox::image::Image::get_local(local, &reference)
                 .await
                 .map_err(FfiError::from)?;
             Ok(image_handle_json(&h).to_string())
@@ -4615,7 +4643,7 @@ pub unsafe extern "C" fn msb_image_list(
             let local = backend
                 .as_local()
                 .ok_or_else(|| FfiError::invalid_argument("image ops require a local backend"))?;
-            let handles = microsandbox::image::Image::list(local)
+            let handles = microsandbox::image::Image::list_local(local)
                 .await
                 .map_err(FfiError::from)?;
             let arr: Vec<serde_json::Value> = handles.iter().map(image_handle_json).collect();
@@ -4638,7 +4666,7 @@ pub unsafe extern "C" fn msb_image_inspect(
             let local = backend
                 .as_local()
                 .ok_or_else(|| FfiError::invalid_argument("image ops require a local backend"))?;
-            let detail = microsandbox::image::Image::inspect(local, &reference)
+            let detail = microsandbox::image::Image::inspect_local(local, &reference)
                 .await
                 .map_err(FfiError::from)?;
             let config = detail.config.as_ref().map(|c| {
@@ -4695,50 +4723,10 @@ pub unsafe extern "C" fn msb_image_remove(
             let local = backend
                 .as_local()
                 .ok_or_else(|| FfiError::invalid_argument("image ops require a local backend"))?;
-            microsandbox::image::Image::remove(local, &reference, force)
+            microsandbox::image::Image::remove_local(local, &reference, force)
                 .await
                 .map_err(FfiError::from)?;
             Ok(r#"{"ok":true}"#.into())
-        }))
-    })
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn msb_image_gc_layers(
-    cancel_id: u64,
-    buf: *mut c_uchar,
-    buf_len: usize,
-) -> *mut c_char {
-    run_c(cancel_id, buf, buf_len, || {
-        Ok(Box::pin(async move {
-            let backend = microsandbox::backend::default_backend();
-            let local = backend
-                .as_local()
-                .ok_or_else(|| FfiError::invalid_argument("image ops require a local backend"))?;
-            let removed = microsandbox::image::Image::gc_layers(local)
-                .await
-                .map_err(FfiError::from)?;
-            Ok(format!(r#"{{"removed":{removed}}}"#))
-        }))
-    })
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn msb_image_gc(
-    cancel_id: u64,
-    buf: *mut c_uchar,
-    buf_len: usize,
-) -> *mut c_char {
-    run_c(cancel_id, buf, buf_len, || {
-        Ok(Box::pin(async move {
-            let backend = microsandbox::backend::default_backend();
-            let local = backend
-                .as_local()
-                .ok_or_else(|| FfiError::invalid_argument("image ops require a local backend"))?;
-            let removed = microsandbox::image::Image::gc(local)
-                .await
-                .map_err(FfiError::from)?;
-            Ok(format!(r#"{{"removed":{removed}}}"#))
         }))
     })
 }
@@ -4755,7 +4743,7 @@ pub unsafe extern "C" fn msb_image_prune(
             let local = backend
                 .as_local()
                 .ok_or_else(|| FfiError::invalid_argument("image ops require a local backend"))?;
-            let report = microsandbox::image::Image::prune(local)
+            let report = microsandbox::image::Image::prune_local(local)
                 .await
                 .map_err(FfiError::from)?;
             Ok(serde_json::json!({
