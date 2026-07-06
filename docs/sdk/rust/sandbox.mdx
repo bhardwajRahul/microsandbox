@@ -544,7 +544,7 @@ for r in &plan.resize_status {
 
 Plan or apply a configuration change. Set what to change (CPUs, memory, env vars, labels, workdir, secrets), then call [`dry_run()`](#dry_run) to preview or [`apply()`](#apply) to commit; both return a [`SandboxModificationPlan`](#sandboxmodificationplan) labeling each change `live`, `next start`, `requires restart`, or `unsupported`. Apply is all-or-nothing.
 
-CPU and memory apply live within the [`max_cpus`](#max_cpus) / [`max_memory`](#max_memory) ceilings; raising a ceiling requires a restart. Env and workdir changes affect future execs only. On a stopped sandbox, changes are saved for the next boot.
+CPU and memory resize live within the [`max_cpus`](#max_cpus) / [`max_memory`](#max_memory) ceilings; raising a ceiling requires a restart. Env and workdir changes affect future execs only. On a stopped sandbox, changes are saved for the next boot.
 
 See [`SandboxModificationBuilder`](#sandboxmodificationbuilder) for all setters and [`msb modify`](/cli/sandbox-commands#msb-modify) for the CLI.
 

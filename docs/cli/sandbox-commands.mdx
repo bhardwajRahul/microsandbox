@@ -214,7 +214,7 @@ msb touch --label app=engine
 
 ## msb modify
 
-Change a running sandbox's configuration. Every change is planned, labeled (live, next start, requires restart, unsupported), and applied all-or-nothing. CPU and memory apply live within the `max_cpus` / `max_memory` ceilings; raising a ceiling requires `--restart` or `--next-start`.
+Change a running sandbox's configuration. Every change is planned, labeled (live, next start, requires restart, unsupported), and applied all-or-nothing. CPU and memory resize live within the `max_cpus` / `max_memory` ceilings; raising a ceiling requires `--restart` or `--next-start`.
 
 ```bash
 msb modify api --cpus 4                    # live when 4 <= max_cpus

@@ -526,7 +526,7 @@ await sb.modify(env={"MODE": "prod"}, policy="restart")
 
 Plan or apply a configuration change. The returned plan labels each change `"live"`, `"next start"`, `"requires restart"`, or `"unsupported"`, and apply is all-or-nothing.
 
-`cpus` and `memory` apply live within the `max_cpus` / `max_memory` ceilings; raising a ceiling requires a restart. Env and workdir changes affect future execs only. On a stopped sandbox, changes are saved for the next boot.
+`cpus` and `memory` resize live within the `max_cpus` / `max_memory` ceilings; raising a ceiling requires a restart. Env and workdir changes affect future execs only. On a stopped sandbox, changes are saved for the next boot.
 
 Secret changes are Rust-SDK and CLI only for now. The CLI equivalent is [`msb modify`](/cli/sandbox-commands#msb-modify).
 
