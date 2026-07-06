@@ -6,7 +6,7 @@ icon: "tags"
 
 Labels are `key=value` pairs you attach to a sandbox to organize it. They let you act on many sandboxes at once with a single command, and break metrics down by whatever dimension you choose, such as user, tenant, or job.
 
-## Add labels
+## Add at create time
 
 Attach labels when you create a sandbox. Labels are repeatable, and a bare key with no value is allowed:
 
@@ -51,7 +51,7 @@ msb create python --name worker \
 ```
 </CodeGroup>
 
-## Change labels on a running sandbox
+## Change while running
 
 Add, change, or remove labels without recreating the sandbox:
 
@@ -80,7 +80,7 @@ msb modify worker --label tier=web --label-rm stale
 ```
 </CodeGroup>
 
-## Select sandboxes by label
+## Select in bulk
 
 This is where labels earn their keep. Every fleet command takes `--label` to act on a whole group at once instead of naming sandboxes one by one. Pass `--label` more than once to require all of them (AND-matched):
 
@@ -116,6 +116,6 @@ handles, err := m.ListSandboxesWith(ctx,
 ```
 </CodeGroup>
 
-## Attribute metrics by label
+## Attribute metrics
 
 Labels flow into a sandbox's metrics as dimensions, so you can break CPU, memory, and I/O down by any label you set, for example per user or per tenant. See [Labels and per-user views](/observability/msb-metrics#labels-and-per-user-views) for the PromQL detail.
