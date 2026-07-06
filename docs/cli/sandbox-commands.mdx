@@ -223,12 +223,6 @@ msb modify api --max-memory 16G --next-start # raise the ceiling on next start
 msb modify api --cpus 8 --dry-run           # show the plan, apply nothing
 ```
 
-The `max_cpus` / `max_memory` ceilings default to the starting `cpus`/`memory`, so reserve headroom at create time if the sandbox may need to grow live.
-
-A live resize may not settle at once; the apply output reports a per-resource `STATE` of `applied`, `converging`, `failed`, or `guest-refused` (the host enforces the limit even when the guest declines). Add `--format json` for the same in `resize_status`.
-
-`--secret NAME@HOST` adds or rotates a secret from the host environment variable of that name. Inline `NAME=VALUE@HOST` is rejected since it would leak into shell history; pass raw values through an SDK.
-
 | Flag | Description |
 |------|-------------|
 | `--cpus` | Desired effective vCPU count |
@@ -238,11 +232,13 @@ A live resize may not settle at once; the apply output reports a per-resource `S
 | `--env`, `--env-rm` | Set (`KEY=VALUE`) or remove an environment variable for future execs |
 | `--label`, `--label-rm` | Set (`KEY=VALUE`) or remove a label |
 | `--workdir` | Working directory for future execs |
-| `--secret`, `--secret-rm` | Add or rotate a secret from a host environment variable (`NAME@HOST`), or remove one |
+| `--secret`, `--secret-rm` | Add or rotate a secret from a host environment variable (`NAME@HOST`), or remove one. Inline `NAME=VALUE` is rejected; use an SDK for raw values |
 | `--dry-run` | Show the plan without applying anything |
 | `--next-start` | Save changes for the next start without mutating a running VM |
 | `--restart` | Restart if needed so restart-required changes become active now |
 | `--format json` | Emit the plan/result as JSON |
+
+A live resize may not apply instantly; `--format json` reports a per-resource `resize_status`. Use `msb modify --help` for the full flag list.
 
 ## msb exec
 
