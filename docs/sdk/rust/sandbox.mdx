@@ -106,7 +106,7 @@ async fn list() -> MicrosandboxResult<Vec<SandboxHandle>>
 
 ```rust
 for h in Sandbox::list().await? {
-    println!("{} — {:?}", h.name(), h.status());
+    println!("{} - {:?}", h.name(), h.status());
 }
 ```
 
@@ -410,7 +410,7 @@ use microsandbox::sandbox::{LogOptions, LogSource, Sandbox};
 
 let handle = Sandbox::get("web").await?;
 
-// Default — all user-program output, regardless of pipe/pty mode
+// Default: all user-program output, regardless of pipe/pty mode
 let entries = handle.logs(&LogOptions::default())?;
 
 for e in entries {
@@ -445,7 +445,7 @@ let recent = handle.logs(&LogOptions {
 
 </Accordion>
 
-Read captured output from the sandbox's `exec.log`. Backed by an on-disk JSON Lines file the runtime writes via the relay tap. Works on running and stopped sandboxes alike — there is no protocol traffic. The same method is available on [`SandboxHandle`](#sandboxhandle) for callers that don't want to start the sandbox first.
+Read captured output from the sandbox's `exec.log`. Backed by an on-disk JSON Lines file the runtime writes via the relay tap. Works on running and stopped sandboxes alike; there is no protocol traffic. The same method is available on [`SandboxHandle`](#sandboxhandle) for callers that don't want to start the sandbox first.
 
 The default sources are `Stdout`, `Stderr`, and `Output` (PTY-merged). Pass `LogSource::System` to also include synthetic lifecycle markers and runtime/kernel diagnostic lines. `logs()` is **synchronous** because it's a pure file read.
 
@@ -542,7 +542,7 @@ for r in &plan.resize_status {
 
 </Accordion>
 
-Start planning a configuration change for this sandbox. The returned builder accumulates a patch — CPUs, memory, env vars, labels, workdir, secrets — and terminates with [`dry_run()`](#dry_run) or [`apply()`](#apply). The resulting [`SandboxModificationPlan`](#sandboxmodificationplan) classifies every requested change as `live`, `next start`, `requires restart`, or `unsupported`, and apply is all-or-nothing. CPU count and memory apply live to a running sandbox when the target fits inside the boot-time capacity ([`max_cpus`](#max_cpus) / [`max_memory`](#max_memory)); raising the capacity itself is restart-backed. See [`SandboxModificationBuilder`](#sandboxmodificationbuilder) for the full builder API and [`msb modify`](/cli/sandbox-commands#msb-modify) for the CLI equivalent.
+Start planning a configuration change for this sandbox. The returned builder accumulates a patch (CPUs, memory, env vars, labels, workdir, secrets) and terminates with [`dry_run()`](#dry_run) or [`apply()`](#apply). The resulting [`SandboxModificationPlan`](#sandboxmodificationplan) classifies every requested change as `live`, `next start`, `requires restart`, or `unsupported`, and apply is all-or-nothing. CPU count and memory apply live to a running sandbox when the target fits inside the boot-time capacity ([`max_cpus`](#max_cpus) / [`max_memory`](#max_memory)); raising the capacity itself is restart-backed. See [`SandboxModificationBuilder`](#sandboxmodificationbuilder) for the full builder API and [`msb modify`](/cli/sandbox-commands#msb-modify) for the CLI equivalent.
 
 The same method is available on [`SandboxHandle`](#sandboxhandle) for callers that don't want to connect first. It never starts a stopped sandbox; changes on a stopped sandbox persist for the next boot.
 
@@ -847,7 +847,7 @@ Fully disable networking. No network interface is created.
 fn entrypoint(self, cmd: impl IntoIterator<Item = impl Into<String>>) -> Self
 ```
 
-Override the OCI image's stored ENTRYPOINT. The value is consulted by command-resolution paths that follow OCI semantics — specifically `msb exec` / `msb run` against this sandbox from the terminal. [`Sandbox::exec`](/sdk/rust/execution) and [`Sandbox::shell`](/sdk/rust/execution) do **not** consult it; they pass `cmd` literally to the guest agent. Use this when configuring a sandbox via the SDK for later CLI attachment.
+Override the OCI image's stored ENTRYPOINT. The value is consulted by command-resolution paths that follow OCI semantics, specifically `msb exec` / `msb run` against this sandbox from the terminal. [`Sandbox::exec`](/sdk/rust/execution) and [`Sandbox::shell`](/sdk/rust/execution) do **not** consult it; they pass `cmd` literally to the guest agent. Use this when configuring a sandbox via the SDK for later CLI attachment.
 
 <p className="msb-label">Parameters</p>
 
@@ -968,7 +968,7 @@ let sb = Sandbox::builder("worker")
 
 </Accordion>
 
-Like [`init`](#init), but with a closure-builder for argv and env vars. Mirrors `exec_with` in shape. The builder exposes `arg`, `args`, `env`, and `envs`. Calling `init` or `init_with` more than once overwrites — different from `env`, which appends. The init is one-shot pre-boot.
+Like [`init`](#init), but with a closure-builder for argv and env vars. Mirrors `exec_with` in shape. The builder exposes `arg`, `args`, `env`, and `envs`. Calling `init` or `init_with` more than once overwrites, unlike `env`, which appends. The init is one-shot pre-boot.
 
 <p className="msb-label">Parameters</p>
 
@@ -1644,7 +1644,7 @@ Write UTF-8 text content at `path`.
 
 Fluent builder for changing an existing sandbox's configuration. Obtained via [`sb.modify()`](#sb-modify) or [`SandboxHandle::modify()`](#sandboxhandle). Setters accumulate a patch; nothing happens until the terminal [`dry_run()`](#dry_run) or [`apply()`](#apply) call. Both return a [`SandboxModificationPlan`](#sandboxmodificationplan) that classifies every requested change as `live`, `next start`, `requires restart`, or `unsupported`.
 
-Apply is all-or-nothing: a patch with conflicts, unsupported changes, or restart-required changes under the default policy fails without changing anything. CPU count and memory apply live to a running sandbox when the target fits inside the boot-time capacity ([`max_cpus`](#max_cpus) / [`max_memory`](#max_memory)). Raising the capacity itself is restart-backed, so pick capacity headroom at create time. Env and workdir changes on a running sandbox apply to future execs only — running processes keep their current environment — and the plan reports this as a warning. The CLI equivalent is [`msb modify`](/cli/sandbox-commands#msb-modify).
+Apply is all-or-nothing: a patch with conflicts, unsupported changes, or restart-required changes under the default policy fails without changing anything. CPU count and memory apply live to a running sandbox when the target fits inside the boot-time capacity ([`max_cpus`](#max_cpus) / [`max_memory`](#max_memory)). Raising the capacity itself is restart-backed, so pick capacity headroom at create time. Env and workdir changes on a running sandbox apply to future execs only (running processes keep their current environment), and the plan reports this as a warning. The CLI equivalent is [`msb modify`](/cli/sandbox-commands#msb-modify).
 
 #### <span className="msb-recv">.</span><span className="msb-hn">apply()</span>
 
@@ -1654,7 +1654,7 @@ async fn apply(self) -> MicrosandboxResult<SandboxModificationPlan>
 
 Apply the accumulated patch atomically. Live-capable changes mutate the running VM first (CPU hotplug, memory resize, secret rotation through the runtime control socket); the desired config is persisted only after the live step succeeds. For stopped sandboxes or [`next_start()`](#next_start) requests, changes persist for the next start. With [`restart()`](#restart), the existing stop/start lifecycle path makes restart-required changes active.
 
-Live resize is not necessarily instant: when an accepted resize has not fully settled, the returned plan's `resize_status` reports per-resource convergence — see [`ResourceResizeStatus`](#resourceresizestatus).
+Live resize is not necessarily instant: when an accepted resize has not fully settled, the returned plan's `resize_status` reports per-resource convergence; see [`ResourceResizeStatus`](#resourceresizestatus).
 
 <p className="msb-label">Returns</p>
 
@@ -1919,12 +1919,12 @@ The `SecretPatchBuilder` closure exposes:
 | Method | Description |
 |--------|-------------|
 | `env(name)` | Name the secret (required). This is the environment variable that exposes the placeholder inside the guest |
-| `source(source)` | Provide the material as a host-side `SecretSource` reference — `SecretSource::Env { var }` (host environment variable, resolved at apply time) or `SecretSource::Store { reference }`. The durable config records only the reference. Mutually exclusive with `value` |
-| `value(value)` | Provide the material as a raw value, for embedders that hold only a value. Zeroized on drop, redacted from `Debug`, never enters the plan — but a value-based apply persists the value into the durable config until a later source-based rotate migrates it to a reference, the same at-rest property as [`secret_env()`](#secret_env) |
+| `source(source)` | Provide the material as a host-side `SecretSource` reference: `SecretSource::Env { var }` (host environment variable, resolved at apply time) or `SecretSource::Store { reference }`. The durable config records only the reference. Mutually exclusive with `value` |
+| `value(value)` | Provide the material as a raw value, for embedders that hold only a value. Zeroized on drop, redacted from `Debug`, never enters the plan, but a value-based apply persists the value into the durable config until a later source-based rotate migrates it to a reference, the same at-rest property as [`secret_env()`](#secret_env) |
 | `placeholder(text)` | Set the guest-visible placeholder. Placeholder changes cannot reach already-running processes, so they classify as `requires restart` on a running sandbox |
 | `allow_host(host)` | Add an allowed host pattern (`api.example.com`, `*.example.org`, or `*`). A non-empty list replaces the secret's current allow-list; an empty list leaves it unchanged. A new secret needs at least one |
 
-Prefer `source(..)` over `value(..)` when the value can be referenced — see the at-rest note on [`secret_env()`](#secret_env) and [Secrets](/sandboxes/secrets) for the full model.
+Prefer `source(..)` over `value(..)` when the value can be referenced; see the at-rest note on [`secret_env()`](#secret_env) and [Secrets](/sandboxes/secrets) for the full model.
 
 <p className="msb-label">Parameters</p>
 
@@ -2019,9 +2019,9 @@ Tag indicating where a captured log entry came from.
 
 | Value | Description |
 |-------|-------------|
-| `Stdout` | Captured from a session's stdout (pipe mode — streams stayed separated) |
+| `Stdout` | Captured from a session's stdout (pipe mode; streams stayed separated) |
 | `Stderr` | Captured from a session's stderr (pipe mode) |
-| `Output` | Captured from a session running in pty mode. PTY allocation merges stdout and stderr at the kernel level inside the guest, so they arrive as a single stream — tagged `Output` rather than mislabeled as `Stdout`. |
+| `Output` | Captured from a session running in pty mode. PTY allocation merges stdout and stderr at the kernel level inside the guest, so they arrive as a single stream, tagged `Output` rather than mislabeled as `Stdout`. |
 | `System` | Synthetic entry: lifecycle markers in `exec.log` plus runtime/kernel diagnostic lines merged in at read time when `System` is requested. |
 
 ### SandboxPingResult

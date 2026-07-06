@@ -144,7 +144,7 @@ if err != nil {
     return err
 }
 for _, h := range handles {
-    fmt.Printf("%s — %s\n", h.Name(), h.Status())
+    fmt.Printf("%s - %s\n", h.Name(), h.Status())
 }
 ```
 
@@ -657,9 +657,9 @@ _, err = sb.Modify(ctx, m.ModifyOptions{
 
 </Accordion>
 
-Plan or apply a configuration change. Every requested change is classified as `"live"`, `"next start"`, `"requires restart"`, or `"unsupported"`, and apply is all-or-nothing. A patch with conflicts, unsupported changes, or restart-required changes under the default policy returns an error without changing anything. `CPUs` and `MemoryMiB` apply live to a running sandbox when the target fits inside the boot-time capacity ([`WithMaxCPUs`](#withmaxcpus) / [`WithMaxMemory`](#withmaxmemory)); raising the capacity itself is restart-backed. Env and workdir changes on a running sandbox apply to future execs only — running processes keep their current environment — and the plan reports this as a warning. The CLI equivalent is [`msb modify`](/cli/sandbox-commands#msb-modify).
+Plan or apply a configuration change. Every requested change is classified as `"live"`, `"next start"`, `"requires restart"`, or `"unsupported"`, and apply is all-or-nothing. A patch with conflicts, unsupported changes, or restart-required changes under the default policy returns an error without changing anything. `CPUs` and `MemoryMiB` apply live to a running sandbox when the target fits inside the boot-time capacity ([`WithMaxCPUs`](#withmaxcpus) / [`WithMaxMemory`](#withmaxmemory)); raising the capacity itself is restart-backed. Env and workdir changes on a running sandbox apply to future execs only (running processes keep their current environment), and the plan reports this as a warning. The CLI equivalent is [`msb modify`](/cli/sandbox-commands#msb-modify).
 
-The same method is available on [`SandboxHandle`](#sandboxhandle); it never starts a stopped sandbox — changes on a stopped sandbox persist for the next boot. Secret changes are Rust-SDK and CLI only for now.
+The same method is available on [`SandboxHandle`](#sandboxhandle); it never starts a stopped sandbox; changes on a stopped sandbox persist for the next boot. Secret changes are Rust-SDK and CLI only for now.
 
 Live resize is not necessarily instant: enforcement applies immediately, and the returned plan's `ResizeStatus` reports whether the guest has finished converging (onlining CPUs, plugging memory blocks). See [`SandboxModificationPlan`](#sandboxmodificationplan).
 
@@ -1901,7 +1901,7 @@ A lightweight reference to a sandbox's persisted state. Carries metadata (name, 
 | `Refresh(ctx)` | `(*SandboxHandle, error)` | Fresh handle for the same name |
 | `Ping(ctx)` | `(*`[`SandboxPingResult`](#sandboxpingresult)`, error)` | Check agent reachability without refreshing idle activity; does not start stopped sandboxes |
 | `Touch(ctx)` | `(*`[`SandboxTouchResult`](#sandboxtouchresult)`, error)` | Explicitly refresh idle activity; does not start stopped sandboxes |
-| `Modify(ctx, opts)` | `(*`[`SandboxModificationPlan`](#sandboxmodificationplan)`, error)` | Plan or apply a configuration change; same [`ModifyOptions`](#modifyoptions) as [`Modify()`](#sb-modify). Does not start stopped sandboxes — changes persist for the next boot |
+| `Modify(ctx, opts)` | `(*`[`SandboxModificationPlan`](#sandboxmodificationplan)`, error)` | Plan or apply a configuration change; same [`ModifyOptions`](#modifyoptions) as [`Modify()`](#sb-modify). Does not start stopped sandboxes; changes persist for the next boot |
 | `Metrics(ctx)` | `(*`[`Metrics`](#metrics)`, error)` | Point-in-time resource metrics |
 | `Logs(ctx, opts)` | `([]`[`LogEntry`](#logentry)`, error)` | Read captured `exec.log` (works without starting) |
 | `LogStream(ctx, opts)` | `(*`[`LogStreamHandle`](#logstreamhandle)`, error)` | Stream captured output |
@@ -1991,7 +1991,7 @@ Dry-run or apply plan for a sandbox modification. Values never appear in a plan:
 | AllowHosts | `[]string` | Allowed hosts after the requested change (secret entries) |
 | Reason | `*string` | Human-readable reason for the classification, when useful |
 
-`ResourceResizeStatus` reports runtime convergence for a live resize — enforcement applies immediately, the guest converges asynchronously:
+`ResourceResizeStatus` reports runtime convergence for a live resize; enforcement applies immediately, the guest converges asynchronously:
 
 | Field | Type | Description |
 |-------|------|-------------|

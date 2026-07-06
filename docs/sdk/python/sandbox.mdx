@@ -524,9 +524,9 @@ await sb.modify(env={"MODE": "prod"}, policy="restart")
 
 </Accordion>
 
-Plan or apply a configuration change. Every requested change is classified as `"live"`, `"next start"`, `"requires restart"`, or `"unsupported"`, and apply is all-or-nothing. A patch with conflicts, unsupported changes, or restart-required changes under the default policy raises without changing anything. `cpus` and `memory` apply live to a running sandbox when the target fits inside the boot-time capacity (`max_cpus` / `max_memory`); raising the capacity itself is restart-backed. Env and workdir changes on a running sandbox apply to future execs only — running processes keep their current environment — and the plan reports this as a warning. The CLI equivalent is [`msb modify`](/cli/sandbox-commands#msb-modify).
+Plan or apply a configuration change. Every requested change is classified as `"live"`, `"next start"`, `"requires restart"`, or `"unsupported"`, and apply is all-or-nothing. A patch with conflicts, unsupported changes, or restart-required changes under the default policy raises without changing anything. `cpus` and `memory` apply live to a running sandbox when the target fits inside the boot-time capacity (`max_cpus` / `max_memory`); raising the capacity itself is restart-backed. Env and workdir changes on a running sandbox apply to future execs only (running processes keep their current environment), and the plan reports this as a warning. The CLI equivalent is [`msb modify`](/cli/sandbox-commands#msb-modify).
 
-The same method is available on [`SandboxHandle`](#sandboxhandle); it never starts a stopped sandbox — changes on a stopped sandbox persist for the next boot. Secret changes are Rust-SDK and CLI only for now.
+The same method is available on [`SandboxHandle`](#sandboxhandle); it never starts a stopped sandbox; changes on a stopped sandbox persist for the next boot. Secret changes are Rust-SDK and CLI only for now.
 
 The returned plan dict mirrors the canonical JSON shape:
 
@@ -683,7 +683,7 @@ from microsandbox import Sandbox
 
 handle = await Sandbox.get("web")
 
-# Default — all user-program output, regardless of pipe/pty mode
+# Default: all user-program output, regardless of pipe/pty mode
 entries = await handle.logs()
 for e in entries:
     label = {"stdout": "OUT", "stderr": "ERR", "output": "PTY", "system": "SYS"}[e.source]
@@ -1230,7 +1230,7 @@ A lightweight handle to an existing sandbox (running or stopped). Provides statu
 | refresh() | `Awaitable[`[`SandboxHandle`](#sandboxhandle)`]` | Re-fetch status and metadata, returning a fresh handle |
 | ping() | `Awaitable[`[`SandboxPingResult`](#sandboxpingresult)`]` | Check agent reachability without refreshing idle activity; does not start stopped sandboxes |
 | touch() | `Awaitable[`[`SandboxTouchResult`](#sandboxtouchresult)`]` | Explicitly refresh idle activity; does not start stopped sandboxes |
-| modify(...) | `Awaitable[dict[str, Any]]` | Plan or apply a configuration change; same kwargs as [`modify()`](#sb-modify). Does not start stopped sandboxes — changes persist for the next boot |
+| modify(...) | `Awaitable[dict[str, Any]]` | Plan or apply a configuration change; same kwargs as [`modify()`](#sb-modify). Does not start stopped sandboxes; changes persist for the next boot |
 | connect(timeout=None) | `Awaitable[`[`Sandbox`](#instance-methods)`]` | Connect to a running sandbox, optionally with an explicit timeout in seconds |
 | start(*, detached=False) | `Awaitable[`[`Sandbox`](#instance-methods)`]` | Start in attached or detached mode |
 | stop(timeout=None) | `Awaitable[None]` | Gracefully shut down and wait until stopped state is observed |

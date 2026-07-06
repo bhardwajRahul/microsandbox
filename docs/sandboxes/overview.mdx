@@ -128,7 +128,7 @@ memory. If a sandbox may need to grow, set `max_cpus`/`max_memory` above the
 initial values when you create it.
 
 Labels are arbitrary `key=value` metadata attached to a sandbox, set at creation
-and fixed for the sandbox's life. They are meant for attribution — tagging a
+and fixed for the sandbox's life. They are meant for attribution: tagging a
 sandbox with the user, tenant, or environment it belongs to so the metrics
 pipeline can build per-user views. Keys cannot start with the reserved prefixes
 `sandbox.`, `microsandbox.`, or `service.`.
@@ -149,7 +149,7 @@ carries high-cardinality labels (a commit SHA, a build timestamp); set
 ### Selecting sandboxes by label
 
 Labels double as selectors. `list_with` returns sandboxes carrying **all** of
-the given labels (AND-matched) — useful when your application owns a subset of
+the given labels (AND-matched), useful when your application owns a subset of
 sandboxes on a shared host. The CLI extends this to bulk operations: `msb stop`,
 `msb start`, and `msb rm` all accept `--label` to act on every match.
 
