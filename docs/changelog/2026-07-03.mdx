@@ -23,7 +23,7 @@ See the [customize sandboxes guide](/sandboxes/customize).
 
 **Sandbox state and resource columns in `msb ps` and `msb metrics`**
 
-`msb ps` now shows each sandbox's CPU and memory allocation as `effective / max`, so you can see current allocation and live-resize headroom at a glance. `msb metrics` gains a `STATE` column, per-second I/O rates, and `--watch` and `--follow` modes for live monitoring. Crashed runtimes are now demoted from the active view on the next read, so a SIGKILLed sandbox no longer shows as running. Denominators follow live resizes rather than boot-time values.
+`msb ps` now shows each sandbox's CPU and memory allocation as `effective / max`, so you can see current allocation and live-resize headroom at a glance. `msb metrics` gains a `STATE` column (`running`, `stalled`, or `exited`), per-second I/O rates, `--sort cpu|mem`, and `--watch` and `--follow` modes for live monitoring; the Rust SDK exposes the same data via `SandboxMetricsReport`. Crashed runtimes are now demoted from the active view on the next read, so a SIGKILLed sandbox no longer shows as running. Denominators follow live resizes rather than boot-time values.
 
 ```bash
 msb ps
