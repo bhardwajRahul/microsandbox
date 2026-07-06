@@ -8,7 +8,7 @@ Labels are `key=value` pairs you attach to a sandbox to organize it. They let yo
 
 ## Keys
 
-Label keys cannot start with the reserved prefixes `sandbox.`, `microsandbox.`, or `service.`. Use those namespaces only for attributes microsandbox owns.
+Label keys cannot start with the reserved prefixes `sandbox.`, `microsandbox.`, or `service.`. Those namespaces belong to the runtime, which sets attributes under them itself and rejects any sandbox you try to create with a label key that uses one.
 
 Values may be empty. A valueless label such as `--label gpu` is stored as `gpu=""`, matching Docker's label semantics. Use empty values for marker labels, and use explicit values when you need filtering or metrics dimensions such as `user.id=alice` or `tenant=acme`.
 
